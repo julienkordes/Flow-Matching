@@ -4,7 +4,7 @@ import copy
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 from models import get_model
-from utils import get_dataloader, get_scheduler, flow_matching_loss, update_ema
+from utils import get_dataloader, get_scheduler, flow_matching_loss, update_ema, sample_and_save
 from torch.optim import AdamW
 
 def train(args):
@@ -54,9 +54,10 @@ def train(args):
         pbar = tqdm(dataloader, desc=f"Epoch {epoch}/{args.num_epochs}")
 
         for batch_idx, (x, class_label) in enumerate(pbar):
+            x, class_label = x.to(device), class_label.to(device)
             optimizer.zero_grad()
             drop_mask = torch.rand(x.shape[0], device=device) < 0.1  
-            class_label[drop_mask] = model.num_classes  # null token = index 10
+            class_label[drop_mask] = args.num_classes  # null token = index 10
             loss = flow_matching_loss(model, x, class_label=class_label)
             loss.backward()
 
@@ -72,7 +73,9 @@ def train(args):
         losses.append(avg_loss)
         print(f"Epoch {epoch} — Loss moyenne : {avg_loss:.4f} — LR : {lr_scheduler.get_last_lr()[0]:.6f}")
 
-         
+        if epoch % args.sample_every == 0:
+            sample_and_save(ema_model, args, epoch)
+
         # Sauvegarde checkpoint
         if epoch % args.save_every == 0:
             ckpt_path = os.path.join(args.checkpoint_dir, f"FM_epoch_{epoch:04d}.pt")

@@ -61,7 +61,7 @@ def get_parser():
     parser.add_argument("--num_epochs", type=int, default=500)
     parser.add_argument("--save_every", type=int, default=10)
     parser.add_argument("--sample_every", type=int, default=5)
-    parser.add_argument("--num_samples", type=int, default=64)
+    parser.add_argument("--num_samples", type=int, default=16)
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--output_dir", type=str, default="outputs")
     parser.add_argument("--checkpoint_dir", type=str, default=None, help="dir pour save les checkpoints")
@@ -73,5 +73,7 @@ def get_parser():
     parser.add_argument("--depth", type=int, default=12)
     parser.add_argument("--patch_size", type=int, default=4)
     parser.add_argument("--num_classes", type=int, default=10)
+    parser.add_argument("--weight_decay", type=float, default=1e-4)
+    parser.add_argument("--sample_steps", type=int, default=20)
 
     return parser

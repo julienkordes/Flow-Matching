@@ -3,7 +3,7 @@ from .DiT import DiT
 
 model_dict = {
     "unet": UNet,
-    "DiT": DiT,
+    "dit": DiT,
 }
 
 def get_model(name: str, *args, **kwargs):
