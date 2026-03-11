@@ -40,13 +40,13 @@ def get_scheduler(optimizer, warmup_steps, total_steps):
 
         return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
 
-def flow_matching_loss(model, x1):
+def flow_matching_loss(model, x1, class_label=None):
     B, _, _, _ = x1.shape
     x0 = torch.randn_like(x1)
     t  = torch.rand(B)
     xt = (1 - t) * x0 + t * x1
     ut = x1 - x0
-    loss = F.mse_loss(model(xt, t), ut)
+    loss = F.mse_loss(model(xt, t, class_label=class_label), ut)
     return loss
 
 def update_ema(ema_model, model, decay, step):

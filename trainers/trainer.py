@@ -17,14 +17,8 @@ def train(args):
     # Données
     dataloader = get_dataloader(args)
 
-    model = get_model(args.model, 
-            args.in_channels, 
-            args.channels, 
-            args.network_depth,
-            args.num_res_block, 
-            args.attention_resolution, 
-            args.image_size, 
-            args.time_emb_dim
+    model = get_model(args.model, embed_dim=args.embed_dim, num_heads=args.num_heads, depth=args.depth, 
+            in_channels=args.in_channels, img_size=args.img_size, patch_size=args.patch_size, num_classes=args.num_classes
             ).to(device)
     
     start_epoch = 0
@@ -61,7 +55,9 @@ def train(args):
 
         for batch_idx, (x, class_label) in enumerate(pbar):
             optimizer.zero_grad()
-            loss = flow_matching_loss(model, x)
+            drop_mask = torch.rand(x.shape[0], device=device) < 0.1  
+            class_label[drop_mask] = model.num_classes  # null token = index 10
+            loss = flow_matching_loss(model, x, class_label=class_label)
             loss.backward()
 
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
