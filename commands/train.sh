@@ -1,7 +1,9 @@
 uv run main.py \
    --output_dir "outputs" \
-   --checkpoint_dir "checkpoints/800_epochs" \
+   --checkpoint_dir "checkpoints/DIT_800_epochs" \
+   --checkpoint_path "checkpoints/DIT_800_epochs/FM_epoch_0700.pt" \
    --save_every 50 \
-   --sample_every 20 \
+   --sample_every 25 \
    --num_epochs 800 \
-   --model "DiT" \
+   --model "dit" \
+   --sample_steps 40 \

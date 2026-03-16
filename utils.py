@@ -3,9 +3,11 @@ import os
 import torch
 import torch.nn.functional as F
 import torchvision.transforms.functional as TF
+from tqdm import tqdm
 from torchvision import transforms, datasets
 from torch.utils.data import DataLoader
 from torchvision.utils import save_image, make_grid
+from torch_fidelity import calculate_metrics
 from PIL import Image, ImageDraw
 
 
@@ -63,18 +65,30 @@ def update_ema(ema_model, model, decay, step):
 @torch.no_grad()
 def sample(model, args, shape, class_label=None):
     B, _, _, _ = shape
-    def rk4_step(x, t, dt):
+
+    def cfg_vector_field(model, x, t, class_label, guidance_scale):
+        t = min(t, 1.0 - 1e-5) 
         t_ = t * torch.ones(B, device=x.device)
-        k1 = model(x,              t_, class_label)
-        k2 = model(x + dt/2 * k1, t_ + dt/2, class_label)
-        k3 = model(x + dt/2 * k2, t_ + dt/2, class_label)
-        k4 = model(x + dt   * k3, t_ + dt, class_label)
+
+        if class_label is None or guidance_scale == 1.0:
+            return model(x, t_, class_label)  # pas de CFG
+
+        v_cond = model(x, t_, class_label)
+        null_label = torch.full_like(class_label, model.num_classes)
+        v_uncond = model(x, t_, null_label)
+        return v_uncond + guidance_scale * (v_cond - v_uncond)
+
+    def rk4_step_cfg(x, t, guidance_scale):
+        k1 = cfg_vector_field(model, x, t, class_label, guidance_scale)
+        k2 = cfg_vector_field(model, x + dt/2 * k1, t + dt/2, class_label, guidance_scale)
+        k3 = cfg_vector_field(model, x + dt/2 * k2, t + dt/2, class_label, guidance_scale)
+        k4 = cfg_vector_field(model, x + dt * k3, t + dt, class_label, guidance_scale)
         return x + dt/6 * (k1 + 2*k2 + 2*k3 + k4)
-    
+
     x = torch.randn(shape).to(args.device)
     dt = 1.0 / args.sample_steps
-    for _, t in enumerate(torch.linspace(0, 1 - dt, args.sample_steps)):
-        x = rk4_step(x, t.item(), dt)
+    for t in torch.linspace(0, 1 - dt, args.sample_steps):
+        x = rk4_step_cfg(x, t.item(), args.guidance_scale)  
     return x
 
 
@@ -90,7 +104,7 @@ def sample_and_save(model, args, epoch, class_label=None):
         class_labels = torch.tensor([class_label] * args.num_samples, device=args.device)
 
     shape = (args.num_samples, args.in_channels, args.img_size, args.img_size)
-    x = sample(model, args, shape, class_label=class_label)
+    x = sample(model, args, shape, class_label=class_labels)
     samples = (x.clamp(-1, 1) + 1) / 2
 
     LABEL_HEIGHT = 12  # pixels de hauteur pour le texte
@@ -111,3 +125,65 @@ def sample_and_save(model, args, epoch, class_label=None):
     save_image(grid, path)
     model.train()
     print(f"  Samples sauvegardés : {path}")
+
+
+class GeneratedDataset(torch.utils.data.Dataset):
+    def __init__(self, tensors):
+        # tensors : (N, 3, 32, 32) dans [0, 255] uint8
+        self.tensors = tensors
+    def __len__(self):
+        return len(self.tensors)
+    def __getitem__(self, i):
+        return self.tensors[i]
+
+
+def show_metrics(model, args):
+    """ Calcule la FID et l'IS """
+    model.eval()
+    all_samples = []
+
+    for _ in tqdm(range(0, args.num_samples_FID, args.batch_size)):
+        class_labels = torch.randint(0, args.num_classes, (args.batch_size,), device=args.device)
+        shape = (args.batch_size, args.in_channels, args.img_size, args.img_size)
+        x = sample(model, args, shape, class_label=class_labels)
+        samples = (x.clamp(-1, 1) + 1) / 2
+
+        samples = (samples * 255).byte().cpu()
+        all_samples.append(samples)
+
+    generated = torch.cat(all_samples, dim=0)
+    dataset = GeneratedDataset(generated)
+    metrics = calculate_metrics(input1=dataset, input2="cifar10-train", fid=True, isc=True)
+
+    fid = metrics['frechet_inception_distance']
+    isc = metrics['inception_score_mean']
+    isc_std = metrics['inception_score_std']
+
+    steps_info = f"{args.sample_steps} steps"
+
+    col_width = 30
+    sep = "+" + "-" * col_width + "+" + "-" * 20 + "+\n"
+
+    def row(label, value):
+        return f"| {label:<{col_width-2}} | {value:<18} |\n"
+
+    table = "\n"
+    table += sep
+    table += row("Metric", "Value")
+    table += sep
+    table += row("Steps", steps_info)
+    table += row("Guidance scale", f"{args.guidance_scale:.1f}")
+    table += row("Num samples", str(args.num_samples_FID))
+    table += sep
+    table += row("FID ↓ (lower is better)", f"{fid:.2f}")
+    table += row("IS  ↑ (higher is better)", f"{isc:.2f} ± {isc_std:.2f}")
+    table += sep
+
+    # Sauvegarde
+    filename = f"metrics_flow_matching"
+    filename += ".txt"
+
+    output_path = os.path.join(args.output_dir, filename)
+    with open(output_path, "w") as f:
+        f.write(table)
+    print(f"Métriques sauvegardées : {output_path}")

@@ -17,20 +17,42 @@ def train(args):
     # Données
     dataloader = get_dataloader(args)
 
-    model = get_model(args.model, embed_dim=args.embed_dim, num_heads=args.num_heads, depth=args.depth, 
-            in_channels=args.in_channels, img_size=args.img_size, patch_size=args.patch_size, num_classes=args.num_classes
-            ).to(device)
-    
+    model_configs = {
+        "dit": {
+            "embed_dim": args.embed_dim,
+            "num_heads": args.num_heads,
+            "depth": args.depth,
+            "patch_size": args.patch_size,
+            "img_size": args.img_size,
+            "in_channels": args.in_channels,
+            "num_classes": args.num_classes,
+        },
+        "unet": {
+            "in_channels": args.in_channels,
+            "channels": args.channels,
+            "network_depth": args.network_depth,
+            "num_res_block": args.num_res_block,
+            "attention_resolution": args.attention_resolution,
+            "image_size": args.img_size,
+            "time_emb_dim": args.time_emb_dim,
+        }
+    }
+
+    model = get_model(args.model, **model_configs[args.model]).to(device)
+
+    print("Model parameters:", sum(p.numel() for p in model.parameters()))
+
     start_epoch = 0
     if args.checkpoint_path:
-        ckpt = torch.load(args.checkpoint_path, map_location=device, weights_only=False)
+        ckpt = torch.load(args.checkpoint_path, map_location=device)
         model.load_state_dict(ckpt["model_state_dict"])
-        start_epoch = int(args.checkpoint_path.split("_")[-1].replace(".pt", "")) 
+        start_epoch = int(args.checkpoint_path.split("_")[-1].replace(".pt", ""))
 
-    ema_model = copy.deepcopy(model)      
-    ema_model.requires_grad_(False)      
-    ema_decay = 0.9999
-    
+    ema_model = copy.deepcopy(model)
+    ema_model.requires_grad_(False)
+    if args.checkpoint_path:
+        ema_model.load_state_dict(ckpt["ema_model_state_dict"])
+
     num_epochs   = args.num_epochs 
     total_steps  = num_epochs * len(dataloader)
     warmup_steps = int(0.01 * total_steps)
@@ -44,7 +66,8 @@ def train(args):
 
     # Si on a loadé un checkpoint on fait avancer le scheduler manuellement jusqu'à la bonne valeur
     if start_epoch > 0:
-        for _ in range(start_epoch):
+        completed_steps = start_epoch * len(dataloader)
+        for _ in range(completed_steps):
             lr_scheduler.step()
         
     losses = []
@@ -65,7 +88,7 @@ def train(args):
 
             optimizer.step()
             lr_scheduler.step()
-            update_ema(ema_model, model, ema_decay, global_step) 
+            update_ema(ema_model, model, args.ema_decay, global_step) 
             epoch_loss += loss.item() 
             pbar.set_postfix({"loss": f"{loss.item():.4f}"})
             global_step += 1

@@ -48,6 +48,7 @@ def get_parser():
     parser.add_argument("--dataset", type=str, default="cifar10")
     parser.add_argument("--img_size", type=int, default=32)
     parser.add_argument("--in_channels", type=int, default=3)
+    parser.add_argument("--channels", type=int, default=64)
     parser.add_argument("--batch_size", type=int, default=128)
     parser.add_argument("--num_res_block", type=int, default=2)
     parser.add_argument("--network_depth", type=int, default=4)
@@ -62,6 +63,7 @@ def get_parser():
     parser.add_argument("--save_every", type=int, default=10)
     parser.add_argument("--sample_every", type=int, default=5)
     parser.add_argument("--num_samples", type=int, default=16)
+    parser.add_argument("--num_samples_FID", type=int, default=10000)
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--output_dir", type=str, default="outputs")
     parser.add_argument("--checkpoint_dir", type=str, default=None, help="dir pour save les checkpoints")
@@ -75,5 +77,6 @@ def get_parser():
     parser.add_argument("--num_classes", type=int, default=10)
     parser.add_argument("--weight_decay", type=float, default=1e-4)
     parser.add_argument("--sample_steps", type=int, default=20)
+    parser.add_argument("--ema_decay", type=float, default=0.9999)
 
     return parser

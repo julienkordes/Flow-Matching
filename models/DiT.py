@@ -23,7 +23,7 @@ class PatchEmbedding(nn.Module):
         super().__init__()
         self.conv = nn.Conv2d(in_channels, embed_dim, kernel_size=patch_size, stride=patch_size)
         self.num_patches = (img_size // patch_size) ** 2
-        self.patch_size  = patch_size
+        self.patch_size = patch_size
         self.in_channels = in_channels
 
     def forward(self, x):
@@ -38,9 +38,9 @@ class MultiHeadSelfAttention(nn.Module):
         super().__init__()
         assert embed_dim % num_heads == 0
         self.num_heads = num_heads
-        self.head_dim  = embed_dim // num_heads
-        self.qkv       = nn.Linear(embed_dim, embed_dim * 3)
-        self.out_proj  = nn.Linear(embed_dim, embed_dim)
+        self.head_dim = embed_dim // num_heads
+        self.qkv = nn.Linear(embed_dim, embed_dim * 3)
+        self.out_proj = nn.Linear(embed_dim, embed_dim)
 
     def forward(self, x):
         B, N, D = x.shape
@@ -71,8 +71,8 @@ class DiTBlock(nn.Module):
         super().__init__()
         self.norm1 = nn.LayerNorm(embed_dim, elementwise_affine=False, eps=1e-6)
         self.norm2 = nn.LayerNorm(embed_dim, elementwise_affine=False, eps=1e-6)
-        self.attn  = MultiHeadSelfAttention(embed_dim, num_heads)
-        self.mlp   = MLP(embed_dim, mlp_ratio)
+        self.attn = MultiHeadSelfAttention(embed_dim, num_heads)
+        self.mlp = MLP(embed_dim, mlp_ratio)
         self.adaLN = nn.Sequential(nn.SiLU(), nn.Linear(embed_dim, 6 * embed_dim))
         nn.init.zeros_(self.adaLN[-1].weight)
         nn.init.zeros_(self.adaLN[-1].bias)
@@ -92,8 +92,8 @@ class FinalLayer(nn.Module):
     """adaLN + projection vers l'espace patch"""
     def __init__(self, embed_dim, patch_size, in_channels):
         super().__init__()
-        self.norm   = nn.LayerNorm(embed_dim, elementwise_affine=False, eps=1e-6)
-        self.adaLN  = nn.Sequential(nn.SiLU(), nn.Linear(embed_dim, 2 * embed_dim))
+        self.norm = nn.LayerNorm(embed_dim, elementwise_affine=False, eps=1e-6)
+        self.adaLN = nn.Sequential(nn.SiLU(), nn.Linear(embed_dim, 2 * embed_dim))
         self.linear = nn.Linear(embed_dim, patch_size * patch_size * in_channels)
         nn.init.zeros_(self.adaLN[-1].weight)
         nn.init.zeros_(self.adaLN[-1].bias)
@@ -115,75 +115,62 @@ class DiT(nn.Module):
     ):
         super().__init__()
         self.in_channels = in_channels
-        self.patch_size  = patch_size
+        self.patch_size = patch_size
 
-        # Patch embedding
         self.patch_embed = PatchEmbedding(in_channels, embed_dim, img_size, patch_size)
-        num_patches      = self.patch_embed.num_patches
+        num_patches = self.patch_embed.num_patches
 
-        # Positional embedding (fixe, non appris)
         self.register_buffer("pos_embed", self._build_pos_embed(num_patches, embed_dim))
 
-        # Conditioning : timestep + classe
         self.time_mlp = nn.Sequential(
-            SinusoidalPositionEmbeddings(embed_dim),   # ← embed_dim, pas in_channels
+            SinusoidalPositionEmbeddings(embed_dim),   
             nn.Linear(embed_dim, embed_dim * 4),
             nn.SiLU(),
             nn.Linear(embed_dim * 4, embed_dim),
         )
-        # +1 pour le token null (CFG)
         self.class_embed = nn.Embedding(num_classes + 1, embed_dim)
+        self.num_classes = num_classes
 
-        # Blocs DiT
         self.blocks = nn.ModuleList([
             DiTBlock(embed_dim, num_heads, mlp_ratio) for _ in range(depth)
         ])
 
-        # Couche finale
         self.final_layer = FinalLayer(embed_dim, patch_size, in_channels)
 
-    # ------------------------------------------------------------------ #
     @staticmethod
     def _build_pos_embed(num_patches, embed_dim):
-        """Positional embedding sinusoïdal 1D simple"""
-        pos    = torch.arange(num_patches).unsqueeze(1).float()        # (N, 1)
-        dim    = torch.arange(0, embed_dim, 2).float()                 # (D/2,)
-        angles = pos / (10000 ** (dim / embed_dim))                    # (N, D/2)
-        pe     = torch.zeros(num_patches, embed_dim)
+        """Positional embedding sinusoïdal 1D"""
+        pos = torch.arange(num_patches).unsqueeze(1).float()    
+        dim = torch.arange(0, embed_dim, 2).float()                 
+        angles = pos / (10000 ** (dim / embed_dim))                    
+        pe = torch.zeros(num_patches, embed_dim)
         pe[:, 0::2] = angles.sin()
         pe[:, 1::2] = angles.cos()
-        return pe.unsqueeze(0)  # (1, N, D)
+        return pe.unsqueeze(0)  
 
-    # ------------------------------------------------------------------ #
     def forward(self, x, t, class_label=None):
         B = x.shape[0]
 
-        # 1. Patch embedding + positional embedding
-        x = self.patch_embed(x) + self.pos_embed   # (B, N, D)
+        x = self.patch_embed(x) + self.pos_embed   
 
-        # 2. Conditioning c = time_emb + class_emb
-        c = self.time_mlp(t)                        # (B, D)
+        c = self.time_mlp(t)
         if class_label is not None:
-            c = c + self.class_embed(class_label)   # (B, D)
+            c = c + self.class_embed(class_label)
 
-        # 3. Blocs DiT
         for block in self.blocks:
             x = block(x, c)
 
-        # 4. Final layer → (B, N, p²×C)
         x = self.final_layer(x, c)
-
-        # 5. Unpatchify → (B, C, H, W)
         x = self._unpatchify(x, B)
         return x
 
     def _unpatchify(self, x, B):
-        """(B, N, p²×C) → (B, C, H, W)"""
-        p  = self.patch_size
-        C  = self.in_channels
-        N  = x.shape[1]
-        h  = w = int(N ** 0.5)
-        x  = x.view(B, h, w, p, p, C)
-        x  = x.permute(0, 5, 1, 3, 2, 4).contiguous()  # (B, C, h, p, w, p)
-        x  = x.view(B, C, h * p, w * p)
+        """(B, N, p²C) → (B, C, H, W)"""
+        p = self.patch_size
+        C = self.in_channels
+        N = x.shape[1]
+        h = w = int(N ** 0.5)
+        x = x.view(B, h, w, p, p, C)
+        x = x.permute(0, 5, 1, 3, 2, 4).contiguous()  
+        x = x.view(B, C, h * p, w * p)
         return x
